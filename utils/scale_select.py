@@ -2,11 +2,24 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-import scipy.io as io
-import math
 import csv
+from scipy.interpolate import griddata
 
-def sift_matching_within_roi(reference_img_path, deformed_img_path, roi_img_path, max_matches=100):
+def select_seed_points(roi_ima_pth, space):
+    # Load the ROI image
+    roi_image = cv2.imread(roi_ima_pth, cv2.IMREAD_GRAYSCALE)
+    height, width = roi_image.shape
+    seed_points = []
+    
+    for y in range(space // 2, height, space):
+        for x in range(space // 2, width, space):
+            # 只选取ROI图像中灰度值为255的点
+            if roi_image[y, x]  > 0:
+                seed_points.append((x, y))
+    
+    return seed_points
+
+def sift_matching_within_roi(reference_img_path, deformed_img_path, roi_img_path, seed_points, space, max_matches=5000):
     # Load images
     reference_img = cv2.imread(reference_img_path, cv2.IMREAD_GRAYSCALE)
     deformed_img = cv2.imread(deformed_img_path, cv2.IMREAD_GRAYSCALE)
@@ -61,26 +74,31 @@ def sift_matching_within_roi(reference_img_path, deformed_img_path, roi_img_path
     matched_pts_ref = np.array(matched_pts_ref)
     matched_pts_def = np.array(matched_pts_def)
     
-    data = np.hstack((matched_pts_ref, matched_pts_def, displacements))
+    # Filter matched points based on seed points
+    filtered_matched_pts_ref = []
+    filtered_matched_pts_def = []
+    filtered_displacements = []
+    search_radius = space 
+    
+    for seed_point in seed_points:
+        seed_x, seed_y = seed_point
+        distances = np.linalg.norm(matched_pts_ref - np.array([seed_x, seed_y]), axis=1)
+        within_radius = distances <= search_radius
+        if np.any(within_radius):
+            indices = np.where(within_radius)[0]
+            selected_index = np.random.choice(indices)
+            filtered_matched_pts_ref.append(matched_pts_ref[selected_index])
+            filtered_matched_pts_def.append(matched_pts_def[selected_index])
+            filtered_displacements.append(displacements[selected_index])
+    
+    filtered_matched_pts_ref = np.array(filtered_matched_pts_ref)
+    filtered_matched_pts_def = np.array(filtered_matched_pts_def)
+    filtered_displacements = np.array(filtered_displacements)
+    
+    data = np.hstack((filtered_matched_pts_ref, filtered_matched_pts_def, filtered_displacements))
     return data
-  
-def remove_outliers(data, threshold=1):
-    # Check the input data type  
-    if not isinstance(data, np.ndarray):  
-        raise ValueError("Input data must be a numpy array")  
-  
-    # Copy the data to avoid modifying the original data  
-    cleaned_data = data.copy()  
-    flag = np.ones((data.shape[0],), dtype=bool)  # Use boolean type for clarity  
-    for col in range(cleaned_data.shape[1] - 2, cleaned_data.shape[1]):  # Process only the last two columns  
-        mean = np.mean(cleaned_data[:, col])  
-        std = np.std(cleaned_data[:, col])  
-        mask = (cleaned_data[:, col] >= mean - threshold * std) & (cleaned_data[:, col] <= mean + threshold * std)  
-        flag = np.logical_and(flag, mask)  
-    cleaned_data = cleaned_data[flag, :]  
-    return cleaned_data
 
-def match_plot(data, reference_img_path, deformed_img_path, save_dir=None, filename=None):
+def match_plot(seedPoint, search_r, data, reference_img_path, deformed_img_path, save_dir=None, filename=None):
     matched_pts_ref, matched_pts_def = data[:,0:2], data[:,2:4]
     reference_img = cv2.imread(reference_img_path, cv2.IMREAD_GRAYSCALE)
     deformed_img = cv2.imread(deformed_img_path, cv2.IMREAD_GRAYSCALE)
@@ -95,6 +113,11 @@ def match_plot(data, reference_img_path, deformed_img_path, save_dir=None, filen
         cv2.circle(reference_img_color, pt_ref, 5, (0, 255, 0), -1)  # Draw green circles in reference image
         cv2.circle(deformed_img_color, pt_def, 5, (0, 0, 255), -1)  # Draw red circles in deformed image
         cv2.line(deformed_img_color, pt_def, pt_ref, (255, 0, 0), 2) # Draw a line between matched points
+    for seed_points in seedPoint:
+        cv2.rectangle(reference_img_color, 
+                      (int(seed_points[0] - search_r), int(seed_points[1] - search_r)), 
+                      (int(seed_points[0] + search_r), int(seed_points[1] + search_r)), 
+                      (255, 255, 255), 2)
 
     # Show the visualization
     plt.figure(figsize=(8, 6))
@@ -114,10 +137,11 @@ def match_plot(data, reference_img_path, deformed_img_path, save_dir=None, filen
     plt.close()  # Close the figure if not showing 
     
 
-def scalelist_fun(sift_params, Train_params):
+def scalelist_fun(sift_params, Train_params, imgth):
     max_matches = sift_params["max_matches"]
     safety_factor = sift_params["safety_factor"]
-    threshold = sift_params["threshold"]
+    space = sift_params["space"]
+    search_radius = sift_params["search_radius"]
     
     path = Train_params['save_data_path']
     if not os.path.exists(path+'scale_information'):
@@ -126,7 +150,7 @@ def scalelist_fun(sift_params, Train_params):
     
     image_files = np.array([x.path for x in os.scandir(Train_params["img_path"])
                          if (x.name.endswith(".bmp") or
-                         x.name.endswith(".png") or 
+                        #  x.name.endswith(".png") or 
                          x.name.endswith(".JPG") or 
                          x.name.endswith(".tiff"))
                          ])
@@ -135,42 +159,43 @@ def scalelist_fun(sift_params, Train_params):
     rfimage_files = [image_files[0]]
     mask_files = [image_files[-1]]
     dfimage_files = image_files[1:-1]
-    
+    # Check if the image index is out of range
     N = len(dfimage_files)
-    
-    SCALE_LIST = []
-    for i in range(N):
-        data = sift_matching_within_roi(
-            rfimage_files[0], dfimage_files[i], mask_files[0], max_matches
-            )
-        data = remove_outliers(data, threshold)
-        match_plot(
-            data, rfimage_files[0], dfimage_files[i], 
-            save_dir=directory, filename=f'example{i+1:03d}_match.png'
-            )
-        displacements = np.abs(data[:,4:6])
-        u_max = np.max(data[:,4])
-        v_max = np.max(data[:,5])
-        u_min = np.min(data[:,4])
-        v_min = np.min(data[:,5])
-        u_scale = ((u_max - u_min)/2) * safety_factor
-        v_scale = ((v_max - v_min)/2) * safety_factor
-        u_scale = 1 if round(u_scale) == 0 else u_scale
-        v_scale = 1 if round(v_scale) == 0 else v_scale
-        # u_mean = int(np.mean(displacements[:,0]))/u_scale
-        # v_mean = int(np.mean(displacements[:,1]))/v_scale
-        u_mean = np.mean(data[:,4:5])
-        v_mean = np.mean(data[:,5:6])
+    if imgth >= N:
+        raise ValueError(f"Image index {imgth} is out of range. The total number of images is {N}.")
+    # Select seed points
+    seed_points = select_seed_points(mask_files[0], space)
+    # Match seed points
+    data = sift_matching_within_roi(
+        rfimage_files[0], dfimage_files[imgth], mask_files[0], 
+        seed_points, space = search_radius, max_matches = max_matches
+        )
+    match_plot(
+        seed_points, search_radius,
+        data, rfimage_files[0], dfimage_files[imgth], 
+        save_dir=directory, filename=f'example{imgth+1:03d}_match.png'
+        )
+    u_max = np.max(data[:,4])
+    v_max = np.max(data[:,5])
+    u_min = np.min(data[:,4])
+    v_min = np.min(data[:,5])
+    u_scale = ((u_max - u_min)/2) * safety_factor
+    v_scale = ((v_max - v_min)/2) * safety_factor
+    u_scale = 1 if round(u_scale) == 0 else u_scale
+    v_scale = 1 if round(v_scale) == 0 else v_scale
+    u_mean = np.mean(data[:,4:5])
+    v_mean = np.mean(data[:,5:6])
 
-        SCALE_LIST.append([
-            u_scale if round(u_scale) == 0 or abs(int(u_scale)) <= 2 else round(u_scale), 
-            v_scale if round(v_scale) == 0 or abs(int(v_scale)) <= 2 else round(v_scale), 
-            u_mean  if int(u_mean) == 0 or abs(int(u_mean)) <= 5 else int(u_mean), 
-            v_mean  if int(v_mean) == 0 or abs(int(v_mean)) <= 5 else int(v_mean)
-            ])
+    SCALE_LIST = []
+    SCALE_LIST.append([
+        u_scale if round(u_scale) == 0 or abs(int(u_scale)) <= 2 else round(u_scale), 
+        v_scale if round(v_scale) == 0 or abs(int(v_scale)) <= 2 else round(v_scale), 
+        u_mean  if int(u_mean) == 0 or abs(int(u_mean)) <= 5 else int(u_mean), 
+        v_mean  if int(v_mean) == 0 or abs(int(v_mean)) <= 5 else int(v_mean)
+        ])
     
     # SCALE_LIST save to CSV file
-    csv_filename = directory + '/SCALE.csv'
+    csv_filename = directory + f"/SCALE{imgth+1:03d}.csv"
     with open(csv_filename, mode='w', newline='') as file:
         writer = csv.writer(file)
         # write the tltle LIne
@@ -178,13 +203,80 @@ def scalelist_fun(sift_params, Train_params):
         # write scale data line
         for scale_data in SCALE_LIST:
             writer.writerow(scale_data)
-    # io.savemat(directory+'/SCALE.mat',{'scale':SCALE_LIST})
-    # print("The scale list is saved to "+directory+'/SCALE.mat')
+    print("The scale list is saved to "+directory+'/SCALE.csv')
+
+    coord_ref, displacement = data[:,0:2], data[:,4:6]
+    u_interp, v_interp = interpolate_displacements(coord_ref, displacement, mask_files[0])
+    visualize_displacements(u_interp, v_interp, save_dir=directory, filename=f'interp{imgth+1:03d}.png')
+    return coord_ref, displacement
+
+
+def interpolate_displacements(coord_ref, displacement, roi_img_pth):
+    roi_img = cv2.imread(roi_img_pth, cv2.IMREAD_GRAYSCALE)
+    height, width = roi_img.shape
+    grid_x, grid_y = np.meshgrid(np.arange(width), np.arange(height))
     
-    return SCALE_LIST
+    # Interpolate the displacement values
+    u_interp = griddata(coord_ref, displacement[:, 0], (grid_x, grid_y), method='cubic', fill_value=0)
+    v_interp = griddata(coord_ref, displacement[:, 1], (grid_x, grid_y), method='cubic', fill_value=0)
+    roi = roi_img > 0
+    u_interp[~roi] = np.nan
+    v_interp[~roi] = np.nan
+    return u_interp, v_interp
+
+
+def visualize_displacements(u_interp, v_interp, save_dir=None, filename=None):
+    plt.figure(figsize=(10, 8))
+    plt.subplot(1, 2, 1)
+    plt.title('U Displacement')
+    plt.imshow(u_interp, cmap='jet')
+    plt.colorbar()
     
-    
-    
-    
-    
-    
+    plt.subplot(1, 2, 2)
+    plt.title('V Displacement')
+    plt.imshow(v_interp, cmap='jet')
+    plt.colorbar()
+    if save_dir and filename:
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        file_path = os.path.join(save_dir, filename)
+        plt.savefig(file_path, bbox_inches='tight', dpi=300)
+        print(f"SIFT match Figure saved to {file_path}")
+    plt.close()  # Close the figure if not showing 
+
+def normalized_coordinates(coords, ROI):
+    XY_roi = np.column_stack(np.where(ROI > 0))
+    X_max, X_min = XY_roi[:,0].max(), XY_roi[:,0].min()
+    Y_max, Y_min = XY_roi[:,1].max(), XY_roi[:,1].min()
+    coords[:,0] = (coords[:,0] - X_min) / (X_max - X_min) * 2 - 1
+    coords[:,1] = (coords[:,1] - Y_min) / (Y_max - Y_min) * 2 - 1
+    return coords
+
+
+if __name__ == "__main__":
+    sift_params = {
+        "max_matches": 3000,
+        'space': 50,
+        'search_radius': 10,
+        'safety_factor': 1.5,
+    }
+    Train_params = {
+        "img_path": "C:/02Project/Research/DIC_Boundary_comparison/Data_test/circle5/",
+        "save_data_path": "C:/02Project/Research/DIC_Boundary_comparison/Data_test/circle5/siftTest/",
+    }
+    coord_ref, displacement = scalelist_fun(sift_params, Train_params, imgth=0)
+    # # Test   
+    # ref_path = "C:/02Project/Research/DIC_Boundary_comparison/Data_test/circle1/001.bmp"
+    # def_path = "C:/02Project/Research/DIC_Boundary_comparison/Data_test/circle1/002.bmp"
+    # roi_img_path = "C:/02Project/Research/DIC_Boundary_comparison/Data_test/circle1/003.bmp"
+    # # 设置间隔
+    # space = 30
+    # # 选取种子点
+    # reference_img = cv2.imread(ref_path, cv2.IMREAD_GRAYSCALE)
+    # roi_img = cv2.imread(roi_img_path, cv2.IMREAD_GRAYSCALE)
+    # seed_points = select_seed_points(reference_img, space, roi_img)
+    # # 匹配种子点
+    # data = sift_matching_within_roi(ref_path, def_path, roi_img_path, seed_points, 10, max_matches=5000)
+    # match_plot(data, ref_path, def_path, 
+    #            save_dir="C:/02Project/Research/DIC_Boundary_comparison/Data_test/circle1/", 
+    #            filename='test5.png')

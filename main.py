@@ -52,12 +52,12 @@ Train_params = {
     "delta_main_lbfgs": 0.01,
     "print_feq": 10,
 }
-Train_params["save_data_path"] = Train_params["img_path"]+"PINN/FCNN/"
+Train_params["save_data_path"] = Train_params["img_path"]+"Q8DIC/"
 
 sift_params = {
     "max_matches": 1000, # Specify the maximum number of matches
     "safety_factor": 1.1, # Adjustment coefficient used as a safety margin
-    "threshold": 1, # Remove outliers greater than 3 * sigma
+    "threshold": 3, # Remove outliers greater than 3 * sigma
 }
 
 Plot_params = {
@@ -78,16 +78,16 @@ Data_params = {
     "RG": 0,    # Placeholder character, 
     "DG": 0,    # waiting for the program to 
     "ROI": 0,   # read and assign a value
-    "XY": 0,
-    "XY_ROI": 0,
-    "Ixy": 0,
+    "node": 0,
+    "element": 0,
+    "Inform": 0,
     "SCALE": [1,1,0,0],  # [umax-umean, vmax-vmean, umean, vmean]
 }
 
 
 if __name__ == '__main__':
     img_dataset = Img_Dataset(Train_params['img_path'])
-    Data_params["RG"], Data_params["ROI"], Data_params["XY"], Data_params["XY_ROI"], Data_params["Ixy"] = img_dataset.data_collect_numpy()
+    Data_params["RG"], Data_params["ROI"], Data_params["node"], Data_params["element"], Data_params["Inform"] = img_dataset.data_collect_numpy()
     img_loader = torch.utils.data.DataLoader(
         img_dataset, batch_size=1, 
         shuffle=False, collate_fn=collate_fn)
@@ -98,19 +98,6 @@ if __name__ == '__main__':
         xy_dataset, batch_size=64*64, 
         shuffle=False, collate_fn=collate_fn_D)
     
-    SCALE_list = scalelist_fun(sift_params, Train_params)
-    csv_file = Train_params["save_data_path"]+'scale_information/SCALE.csv'
-    SCALE_list = []
-    with open(csv_file, mode='r', newline='', encoding='utf-8') as file:
-        csv_reader = csv.reader(file)
-        next(csv_reader)
-        for row in csv_reader:
-            converted_row = []
-            for element in row:
-                converted_element = float(element)
-                converted_row.append(converted_element)
-            SCALE_list.append(converted_row)
-    
     model = Q8main(
         Train_params=Train_params,
         DNN_params=DNN_params,
@@ -120,8 +107,18 @@ if __name__ == '__main__':
     model.to_device(device=device)
     
     for idx, DimageL in enumerate(img_loader):
+        coord_ref, uv_sift = scalelist_fun(sift_params, Train_params, idx)
+        csv_file = Train_params["save_data_path"]+f'scale_information/SCALE.csv'  # {idx+1:03d}
+        # 提示用户检查 csv_file
+        input(f"请检查文件 {csv_file} 是否符合标准，按任意键继续...")
+        scale_list = []
+        with open(csv_file, mode='r', newline='', encoding='utf-8') as file:
+            csv_reader = csv.reader(file)
+            next(csv_reader)  # Skip the header row
+            second_row = next(csv_reader)  # Read the second row
+            scale_list = [float(element) for element in second_row[:4]]
         
-        model.Reload(DG=DimageL[0], scale=SCALE_list[idx])
+        model.Reload(DG=DimageL[0], scale=scale_list)
         model.dnn.initialize_weights()
         
         u, v = PINN_DIC_Solver(model=model, Train_params=Train_params)
@@ -147,18 +144,3 @@ if __name__ == '__main__':
         
         to_matlab(Train_params["save_data_path"], uv_file_name, u, v)
         to_txt(Train_params["save_data_path"], uv_file_name, u, v, Data_params["ROI"])
-        
-        if True:
-            ux, uy, vx, vy = model.Strain_predict(xy_loader)
-            strain_result_plot(
-                ux, uy, vx, vy, 
-                layout = [3,1], WH=[2,5], 
-                save_dir = Train_params["save_data_path"] + "imshow/", 
-                filename = strain_file_name+".png"
-                )
-            Strain_to_matlab(Train_params["save_data_path"], strain_file_name, ux, vx, (uy+vx)/2)
-            Strain_to_txt(
-                Train_params["save_data_path"], 
-                strain_file_name, ux, vx, (uy+vx)/2,
-                Data_params["ROI"]
-                )

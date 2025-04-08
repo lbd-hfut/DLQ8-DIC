@@ -16,10 +16,16 @@ class Q8main:
         self.Iref = torch.tensor(Data_params["RG"], dtype=torch.float32)
         self.Idef = torch.tensor(Data_params["DG"], dtype=torch.float32)
         self.ROI = torch.tensor(Data_params["ROI"], dtype=torch.bool)
-        self.XY = torch.tensor(Data_params["XY"], dtype=torch.float32)
-        self.XY_ROI = torch.tensor(Data_params["XY_ROI"], dtype=torch.long)
-        self.Ixy = torch.tensor(Data_params["Ixy"], dtype=torch.float32)
+        self.node = torch.tensor(Data_params["node"], dtype=torch.float32)
+        self.element = torch.tensor(Data_params["element"], dtype=torch.int32)
+        self.Inform = torch.tensor(Data_params["Inform"], dtype=torch.float32)
         self.scale = torch.tensor(Data_params["SCALE"])
+        H,L = self.Iref.shape
+        y = np.linspace(-1, 1, H); x = np.linspace(-1, 1, L)
+        IX, IY = np.meshgrid(x, y)
+        IX = torch.tensor(IX, dtype=torch.float32)
+        IY = torch.tensor(IY, dtype=torch.float32)
+        self.XY = torch.stack((IX, IY), dim=2).unsqueeze(0).to(device)
         
         # 加载深度学习网络
         self.dnn = MscaleDNN(
@@ -38,10 +44,8 @@ class Q8main:
     def Reload(self, DG, scale):
         self.Idef = torch.tensor(DG, dtype=torch.float32)
         self.Idef = self.Idef.to(self.device)
-        
         self.scale = torch.tensor(scale)
         self.scale = self.scale.to(self.device)
-        
         self.epoch = 0
         
     def to_device(self, device):
@@ -49,8 +53,6 @@ class Q8main:
         self.Idef = self.Idef.to(device)
         self.ROI = self.ROI.to(device)
         self.XY = self.XY.to(device)
-        self.XY_ROI = self.XY_ROI.to(device)
-        self.Ixy = self.Ixy.to(device)
         self.scale = self.scale.to(device)
         self.dnn = self.dnn.to(device)
         
@@ -77,18 +79,58 @@ class Q8main:
                 param_group['lr'] = Train_params["main_lr"]
         else:
             raise ValueError("options for method: LBFGS, ADAM, ADJUST")
+    
+    def shapef(self, xi, eta):
+        N = torch.zeros(xi.shape[0], 8).to(self.device)
+        N[:, 0] = (1 - xi) * (1 - eta) * (-xi - eta - 1) / 4
+        N[:, 1] = (1 - xi ** 2) * (1 - eta) / 2
+        N[:, 2] = (1 + xi) * (1 - eta) * (xi - eta - 1) / 4
+        N[:, 3] = (1 - eta ** 2) * (1 + xi) / 2
+        N[:, 4] = (1 + xi) * (1 + eta) * (xi + eta - 1) / 4
+        N[:, 5] = (1 - xi ** 2) * (1 + eta) / 2
+        N[:, 6] = (1 - xi) * (1 + eta) * (-xi + eta - 1) / 4
+        N[:, 7] = (1 - eta ** 2) * (1 - xi) / 2
+        return N
+
+    def Q8_uv(self):
+        U = self.dnn(self.node[:,1:])
+        # 初始化节点位移
+        Node_u = torch.cat([self.node, U[:, 0].view(-1, 1)], dim=1)  # U[:, 0] 为 x 方向的位移
+        Node_v = torch.cat([self.node, U[:, 1].view(-1, 1)], dim=1)  # U[:, 1] 为 y 方向的位移
+        # 提取单元的节点坐标
+        ele_all = self.element[:, 1:]  # 获取每个单元的8个节点
+        # 创建全局位移场
+        u_global = torch.zeros_like(self.Iref).to(self.device)  # 每个像素点的 x 位移
+        v_global = torch.zeros_like(self.Iref).to(self.device)  # 每个像素点的 y 位移
+
+        u_local = torch.stack([Node_u[self.element[:, 1]-1, 3], Node_u[self.element[:, 5]-1, 3], 
+                               Node_u[self.element[:, 2]-1, 3], Node_u[self.element[:, 6]-1, 3], 
+                               Node_u[self.element[:, 3]-1, 3], Node_u[self.element[:, 7]-1, 3], 
+                               Node_u[self.element[:, 4]-1, 3], Node_u[self.element[:, 8]-1, 3]], 
+                               dim=1) # self.element[:, 1]-1 -1操作是torch索引从0开始
+        v_local = torch.stack([Node_v[self.element[:, 1]-1, 4], Node_v[self.element[:, 5]-1, 4], 
+                               Node_v[self.element[:, 2]-1, 4], Node_v[self.element[:, 6]-1, 4], 
+                               Node_v[self.element[:, 3]-1, 4], Node_v[self.element[:, 7]-1, 4], 
+                               Node_v[self.element[:, 4]-1, 4], Node_v[self.element[:, 8]-1, 4]], 
+                               dim=1) # shape: [num_elements, 8]
+        
+        # 将每个单元的位移值通过形函数与像素点关联，更新每个像素点的位移值
+        for i in range(self.element.shape[0]):
+            x_global = self.Inform[self.Inform[:, 4] == i+1, 0:2] #读取单元内的全局
+            x_local  = self.Inform[self.Inform[:, 4] == i+1, 2:4] #读取对应的局部坐标
+            N_ij = self.shapef(x_local[:, 0], x_local[:, 1]) # 计算形函数 N_ij:-> [num_points, 8]
+            u_gloabl_i = torch.matmul(N_ij, u_local[i, :].T)
+            v_global_i = torch.matmul(N_ij, v_local[i, :].T)
+            u_global[x_global[:, 1].long(), x_global[:, 0].long()] = u_gloabl_i
+            v_global[x_global[:, 1].long(), x_global[:, 0].long()] = v_global_i
+        
+        return u_global, v_global
 
     def warm_loss(self):
         self.optimizer.zero_grad()
         self.optimizer_adam.zero_grad()
-        UV = self.dnn(self.Ixy)
-        # Adjust the shape of the vector to match the shape of the image
-        U = torch.zeros_like(self.Iref)
-        V = torch.zeros_like(self.Iref)
-        y_coords, x_coords = self.XY_ROI[:, 0], self.XY_ROI[:, 1]
-        U[y_coords, x_coords] = UV[:, 0] * self.scale[0] + self.scale[2] 
-        V[y_coords, x_coords] = UV[:, 1] * self.scale[1] + self.scale[3] 
-        
+
+        U, V = self.Q8_uv()
         # Interpolate a new deformed image
         target_height = self.Idef.shape[0]
         target_width  = self.Idef.shape[1]
@@ -120,14 +162,8 @@ class Q8main:
     def main_loss(self):
         self.optimizer.zero_grad()
         self.optimizer_adam.zero_grad()
-        UV = self.dnn(self.Ixy)
-        # Adjust the shape of the vector to match the shape of the image
-        U = torch.zeros_like(self.Iref)
-        V = torch.zeros_like(self.Iref)
-        y_coords, x_coords = self.XY_ROI[:, 0], self.XY_ROI[:, 1]
-        U[y_coords, x_coords] = UV[:, 0] * self.scale[0] + self.scale[2] 
-        V[y_coords, x_coords] = UV[:, 1] * self.scale[1] + self.scale[3] 
-        
+
+        U, V = self.Q8_uv()
         # Interpolate a new deformed image
         target_height = self.Idef.shape[0]
         target_width  = self.Idef.shape[1]
@@ -157,54 +193,10 @@ class Q8main:
     
     def predict(self):
         self.dnn.eval()
-        UV = self.dnn(self.Ixy)
-        U = torch.zeros_like(self.Iref)
-        V = torch.zeros_like(self.Iref)
-        y_coords, x_coords = self.XY_ROI[:, 0], self.XY_ROI[:, 1]
-        U[y_coords, x_coords] = UV[:, 0] * self.scale[0] + self.scale[2] 
-        V[y_coords, x_coords] = UV[:, 1] * self.scale[1] + self.scale[3]
+        with torch.no_grad():
+            U, V = self.Q8_uv()
         u = U.cpu().detach().numpy()
         v = V.cpu().detach().numpy()
         return u, v
-    
-    def Strain_predict(self, xy_loader):
-        ux = torch.zeros_like(self.Iref); ux_numpy = ux.cpu().detach().numpy()
-        uy = torch.zeros_like(self.Iref); uy_numpy = uy.cpu().detach().numpy()
-        vx = torch.zeros_like(self.Iref); vx_numpy = vx.cpu().detach().numpy()
-        vy = torch.zeros_like(self.Iref); vy_numpy = vy.cpu().detach().numpy()
-        xmax, _ = self.XY_ROI[:,1].max(dim=0); xmin, _ = self.XY_ROI[:,1].min(dim=0)
-        ymax, _ = self.XY_ROI[:,0].max(dim=0); ymin, _ = self.XY_ROI[:,0].min(dim=0)
-        xmax = xmax.item(); xmin = xmin.item(); ymax = ymax.item(); ymin = ymin.item()
-        self.dnn.eval()
-        for Ixy_batch, y_coords, x_coords in xy_loader:
-            y_coords = y_coords.cpu().detach().numpy()
-            x_coords = x_coords.cpu().detach().numpy()
-            Ixy_batch.requires_grad_(True)
-            
-            x = Ixy_batch[:,0].view(-1,1); y = Ixy_batch[:,1].view(-1,1)
-            XY = torch.cat((x, y), dim=1)
-            
-            UV = self.dnn(XY)
-            u = UV[:,0]; v = UV[:,1]
-            
-            u_x = torch.autograd.grad(u, x, grad_outputs=torch.ones_like(u), retain_graph=True, create_graph=True, allow_unused=True)[0]
-            u_y = torch.autograd.grad(u, y, grad_outputs=torch.ones_like(u), retain_graph=True, create_graph=True, allow_unused=True)[0]
-            v_x = torch.autograd.grad(v, x, grad_outputs=torch.ones_like(v), retain_graph=True, create_graph=True, allow_unused=True)[0]
-            v_y = torch.autograd.grad(v, y, grad_outputs=torch.ones_like(v), retain_graph=True, create_graph=True, allow_unused=True)[0]
 
-            ux_numpy[y_coords, x_coords] = u_x[:,0].cpu().detach().numpy() / (xmax - xmin) * 2 * self.scale[0].item()
-            uy_numpy[y_coords, x_coords] = u_y[:,0].cpu().detach().numpy() / (ymax - ymin) * 2 * self.scale[0].item()
-            vx_numpy[y_coords, x_coords] = v_x[:,0].cpu().detach().numpy() / (xmax - xmin) * 2 * self.scale[1].item()
-            vy_numpy[y_coords, x_coords] = v_y[:,0].cpu().detach().numpy() / (ymax - ymin) * 2 * self.scale[1].item()
-        return ux_numpy, uy_numpy, vx_numpy, vy_numpy
     
-def result_plot(model, parameter_path ,IX, IY):
-    model.dnn.load_state_dict(torch.load(parameter_path))
-    u1,v1 = model.predict(IX, IY)
-    plt.figure(dpi=300)
-    norm = matplotlib.colors.Normalize(vmin=-1, vmax=1)
-    plt.figure(figsize=(8, 3))
-    plt.imshow(v1, cmap='jet', interpolation='nearest', norm=norm)
-    plt.colorbar()
-    plt.axis('off')
-    plt.title("Predicted displacement field v")  

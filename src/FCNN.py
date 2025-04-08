@@ -9,6 +9,8 @@ class DNN(torch.nn.Module):
         self.num_layers = len(self.width)
         self.input_size = layers[0]
         self.output_size = layers[-1]
+
+        self.normalize_layer = nn.BatchNorm1d(self.input_size, affine=False)
         
         # Define input layer
         self.input_layer = nn.Linear(self.input_size, self.width[0])
@@ -27,6 +29,7 @@ class DNN(torch.nn.Module):
 
     def forward(self, x):
         
+        x = self.normalize_layer(x)
         # Input layer
         x = self.input_layer(x)
         x = 5 * self.a[0] * x
@@ -94,6 +97,7 @@ class MscaleDNN(nn.Module):
         self.scales = scales
         self.activation = activation_dict[activation]
         self.subnets = nn.ModuleList()
+        self.normalize_layer = nn.BatchNorm1d(input_dim, affine=False)
         
         for scale in scales:
             layers = []
@@ -109,6 +113,7 @@ class MscaleDNN(nn.Module):
 
     def forward(self, x):
         outputs = []
+        x = self.normalize_layer(x)
         for i, scale in enumerate(self.scales):
             scaled_x = x * scale
             outputs.append(self.subnets[i](scaled_x))

@@ -20,6 +20,10 @@ class Img_Dataset(Dataset):
         self.rfimage = self.open_image(self.rfimage_files[0])
         self.mask = self.open_image(self.mask_files[0])
         self.dfimage_files = image_files[1:-1]
+
+        self.node = np.loadtxt('./genMesh/nodes.txt', delimiter=',')
+        self.element = np.loadtxt('./genMesh/elements.txt', delimiter=',', dtype=int)
+        self.Inform = np.load('Inform.npy')
         
     def __len__(self):
         return len(self.dfimage_files)
@@ -56,25 +60,11 @@ class Img_Dataset(Dataset):
         
         RG = self.to_tensor(self.rfimage).to(device)
         ROI = self.to_tensor(self.mask).to(device)
-        
-        H,L = self.rfimage.shape
-        y = np.linspace(-1, 1, H)
-        x = np.linspace(-1, 1, L)
-        IX, IY = np.meshgrid(x, y)
-        IX = self.to_tensor(IX)
-        IY = self.to_tensor(IY)
-        XY = torch.stack((IX, IY), dim=2).unsqueeze(0).to(device)
-        XY_roi = np.column_stack(np.where(ROI == 1))
-        XY_roi = torch.tensor(XY_roi).to(device)
-        Ixy = torch.zeros_like(XY_roi)
-        Ixy = Ixy.to(torch.float32)
-        # Ixy->, [-1,1]
-        Ixy[:,0] = 2 * (XY_roi[:, 1] - XY_roi[:, 1].min()) / \
-            (XY_roi[:, 1].max() - XY_roi[:, 1].min()) - 1
-        Ixy[:,1] = 2 * (XY_roi[:, 0] - XY_roi[:, 0].min()) / \
-            (XY_roi[:, 0].max() - XY_roi[:, 0].min()) - 1
-        Ixy = Ixy.to(device)
-        return RG, ROI, XY, XY_roi, Ixy
+        node_tensor = self.to_tensor(self.node).to(device)
+        element_tensor = torch.tensor(self.element, dtype=torch.int32).to(device)
+        Inform_tensor = self.to_tensor(self.Inform).to(device)
+
+        return RG, ROI, node_tensor, element_tensor, Inform_tensor
     
     def data_collect_numpy(self):
         unique_values = np.unique(self.mask) # Get the unique value in the mask
@@ -82,22 +72,9 @@ class Img_Dataset(Dataset):
             self.mask = (self.mask > 0)
         else:
             self.mask = (self.mask == 255)
-        
         RG = self.rfimage
         ROI = self.mask
-        
-        H,L = self.rfimage.shape
-        y = np.linspace(-1, 1, H)
-        x = np.linspace(-1, 1, L)
-        IX, IY = np.meshgrid(x, y)
-        XY = np.stack((IX, IY), axis=2)
-        XY = XY[np.newaxis, ...]
-        XY_roi = np.column_stack(np.where(ROI == 1))
-        Ixy = np.zeros_like(XY_roi).astype(float)
-        # Ixy->, [-1,1]
-        Ixy[:,0] = 2 * (XY_roi[:, 1] - XY_roi[:, 1].min()) / (XY_roi[:, 1].max() - XY_roi[:, 1].min()) - 1
-        Ixy[:,1] = 2 * (XY_roi[:, 0] - XY_roi[:, 0].min()) / (XY_roi[:, 0].max() - XY_roi[:, 0].min()) - 1
-        return RG, ROI, XY, XY_roi, Ixy
+        return RG, ROI, self.node, self.element, self.Inform
     
 def collate_fn(batch):
     return batch  
