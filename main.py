@@ -7,7 +7,7 @@ import time
 from scipy.io import loadmat
 import csv
 
-from utils.solve import PINN_DIC_Solver
+from utils.solve import Q8_DIC_Solver
 from src.Q8NN import Q8main
 from utils.read_img import Img_Dataset, collate_fn, XY_Dataset, collate_fn_D
 from utils.fig_plot import result_plot, contourf_plot, strain_result_plot
@@ -28,9 +28,9 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 seed_everything(42)
 
 Train_params = {
-    "img_path":"C:/02Project/Research/DIC_Boundary_comparison/Data_test/circle1/",
-    "checkpoint": 'C:/02Project\Research/DIC_Boundary_comparison/Checkpoint/PINN-DIC/pytorch/FCNN/',
-    "save_data_path": "",
+    "img_path":'./data/circle/',
+    "checkpoint": './Checkpoint/Q8-DIC/',
+    "save_data_path": '',
     "adam_lr": 0,
     "warm_lr": 0.001,
     "main_lr": 0.0001,
@@ -55,9 +55,10 @@ Train_params = {
 Train_params["save_data_path"] = Train_params["img_path"]+"Q8DIC/"
 
 sift_params = {
-    "max_matches": 1000, # Specify the maximum number of matches
-    "safety_factor": 1.1, # Adjustment coefficient used as a safety margin
-    "threshold": 3, # Remove outliers greater than 3 * sigma
+    "max_matches": 3000, # Specify the maximum number of matches
+    "safety_factor": 1., # Adjustment coefficient used as a safety margin
+    'space': 30,
+    'search_radius': 10,
 }
 
 Plot_params = {
@@ -121,7 +122,7 @@ if __name__ == '__main__':
         model.Reload(DG=DimageL[0], scale=scale_list)
         model.dnn.initialize_weights()
         
-        u, v = PINN_DIC_Solver(model=model, Train_params=Train_params)
+        u, v = Q8_DIC_Solver(model=model, Train_params=Train_params)
 
         uv_file_name = f"uv_{idx+1:03d}"
         strain_file_name = f"strain_{idx+1:03d}"

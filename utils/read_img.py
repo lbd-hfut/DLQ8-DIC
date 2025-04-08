@@ -23,7 +23,7 @@ class Img_Dataset(Dataset):
 
         self.node = np.loadtxt('./genMesh/nodes.txt', delimiter=',')
         self.element = np.loadtxt('./genMesh/elements.txt', delimiter=',', dtype=int)
-        self.Inform = np.load('Inform.npy')
+        self.Inform = np.load('./genMesh/Inform_global_local_NN.npy')
         
     def __len__(self):
         return len(self.dfimage_files)

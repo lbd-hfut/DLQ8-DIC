@@ -1,4 +1,4 @@
-def PINN_DIC_Solver(model, Train_params):
+def Q8_DIC_Solver(model, Train_params):
     model.dnn.train()
     ## warm stage
     model.set_optim(Train_params=Train_params, method="LBFGS")

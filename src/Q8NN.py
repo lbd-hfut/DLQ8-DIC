@@ -52,6 +52,9 @@ class Q8main:
         self.Iref = self.Iref.to(device)
         self.Idef = self.Idef.to(device)
         self.ROI = self.ROI.to(device)
+        self.node = self.node.to(device)
+        self.element = self.element.to(device)
+        self.Inform = self.Inform.to(device)
         self.XY = self.XY.to(device)
         self.scale = self.scale.to(device)
         self.dnn = self.dnn.to(device)
@@ -97,8 +100,7 @@ class Q8main:
         # 初始化节点位移
         Node_u = torch.cat([self.node, U[:, 0].view(-1, 1)], dim=1)  # U[:, 0] 为 x 方向的位移
         Node_v = torch.cat([self.node, U[:, 1].view(-1, 1)], dim=1)  # U[:, 1] 为 y 方向的位移
-        # 提取单元的节点坐标
-        ele_all = self.element[:, 1:]  # 获取每个单元的8个节点
+
         # 创建全局位移场
         u_global = torch.zeros_like(self.Iref).to(self.device)  # 每个像素点的 x 位移
         v_global = torch.zeros_like(self.Iref).to(self.device)  # 每个像素点的 y 位移
@@ -108,10 +110,10 @@ class Q8main:
                                Node_u[self.element[:, 3]-1, 3], Node_u[self.element[:, 7]-1, 3], 
                                Node_u[self.element[:, 4]-1, 3], Node_u[self.element[:, 8]-1, 3]], 
                                dim=1) # self.element[:, 1]-1 -1操作是torch索引从0开始
-        v_local = torch.stack([Node_v[self.element[:, 1]-1, 4], Node_v[self.element[:, 5]-1, 4], 
-                               Node_v[self.element[:, 2]-1, 4], Node_v[self.element[:, 6]-1, 4], 
-                               Node_v[self.element[:, 3]-1, 4], Node_v[self.element[:, 7]-1, 4], 
-                               Node_v[self.element[:, 4]-1, 4], Node_v[self.element[:, 8]-1, 4]], 
+        v_local = torch.stack([Node_v[self.element[:, 1]-1, 3], Node_v[self.element[:, 5]-1, 3], 
+                               Node_v[self.element[:, 2]-1, 3], Node_v[self.element[:, 6]-1, 3], 
+                               Node_v[self.element[:, 3]-1, 3], Node_v[self.element[:, 7]-1, 3], 
+                               Node_v[self.element[:, 4]-1, 3], Node_v[self.element[:, 8]-1, 3]], 
                                dim=1) # shape: [num_elements, 8]
         
         # 将每个单元的位移值通过形函数与像素点关联，更新每个像素点的位移值
@@ -148,10 +150,10 @@ class Q8main:
         # 计算两张图的相关数
         abs_error = (new_Iref[0, 0] - self.Iref)**2 * self.ROI
         abs_error = torch.log(1+abs_error)
-        loss = torch.sum(abs_error) / self.XY_ROI.shape[0]
+        loss = torch.sum(abs_error) / self.Inform.shape[0]
         loss.backward()
         mae = torch.abs(new_Iref[0, 0] - self.Iref) * self.ROI
-        mae = torch.sum(mae) / self.XY_ROI.shape[0]
+        mae = torch.sum(mae) / self.Inform.shape[0]
         self.mae_list.append(mae.item())
         self.epoch = self.epoch+1
         self.dnn.Earlystop(mae.item(), self.epoch)
@@ -180,10 +182,10 @@ class Q8main:
         
         # 计算两张图的相关数
         abs_error = (new_Iref[0, 0] - self.Iref)**2 * self.ROI
-        loss = torch.sum(abs_error) / self.XY_ROI.shape[0]
+        loss = torch.sum(abs_error) / self.Inform.shape[0]
         loss.backward()
         mae = torch.abs(new_Iref[0, 0] - self.Iref) * self.ROI
-        mae = torch.sum(mae) / self.XY_ROI.shape[0]
+        mae = torch.sum(mae) / self.Inform.shape[0]
         self.mae_list.append(mae.item())
         self.epoch = self.epoch+1
         self.dnn.Earlystop(mae.item(), self.epoch)

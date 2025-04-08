@@ -1,3 +1,12 @@
 # 忽略 ./genMesh 文件夹下的所有 .txt 文件和 .npy 文件
 /genMesh/*.txt
 /genMesh/*.npy
+# 忽略data文件下所有内容
+/data/
+# 忽略Checkpoint文件下所有内容
+/Checkpoint/
+# 忽略所有 .pyc 文件
+*.pyc
+# 忽略所有 .pyd 文件
+*.pyd
+
