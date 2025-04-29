@@ -1,6 +1,11 @@
 # 忽略 ./genMesh 文件夹下的所有 .txt 文件和 .npy 文件
 /genMesh/*.txt
 /genMesh/*.npy
+/genMesh/*.bmp
+/genMesh/*/*.txt
+/genMesh/*/*.npy
+/genMesh/*/*.bmp
+
 # 忽略data文件下所有内容
 /data/
 # 忽略Checkpoint文件下所有内容

@@ -25,13 +25,14 @@ def seed_everything(seed_value):
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = True 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(device)
 seed_everything(42)
 
 Train_params = {
-    "img_path":'./data/circle/',
+    "img_path":'C:/02Project/Research/DIC_Boundary_comparison/Data_Gen/circle_continue/generate_fig/N00/S05/',
     "checkpoint": './Checkpoint/Q8-DIC/',
     "save_data_path": '',
-    "adam_lr": 0,
+    "adam_lr": 0.001,
     "warm_lr": 0.001,
     "main_lr": 0.0001,
     "adam_decay": 1e-2,
@@ -44,8 +45,8 @@ Train_params = {
     "warm_bfgs_epoch": 100,
     "main_adam_epoch": 100,
     "main_bfgs_epoch": 100,
-    "patience_adam": 20,
-    "patience_lbfgs": 20,
+    "patience_adam": 100,
+    "patience_lbfgs": 100,
     "delta_warm_adam": 0.5,
     "delta_warm_lbfgs": 0.1,
     "delta_main_adam": 0.05,
@@ -111,7 +112,7 @@ if __name__ == '__main__':
         coord_ref, uv_sift = scalelist_fun(sift_params, Train_params, idx)
         csv_file = Train_params["save_data_path"]+f'scale_information/SCALE.csv'  # {idx+1:03d}
         # 提示用户检查 csv_file
-        input(f"请检查文件 {csv_file} 是否符合标准，按任意键继续...")
+        # input(f"请检查文件 {csv_file} 是否符合标准，按任意键继续...")
         scale_list = []
         with open(csv_file, mode='r', newline='', encoding='utf-8') as file:
             csv_reader = csv.reader(file)
