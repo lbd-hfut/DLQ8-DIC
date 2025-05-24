@@ -8,7 +8,7 @@ import matplotlib
 from PIL import Image
 import os
 
-from src.FCNN import MscaleDNN
+from src.FCNN import RBFCNN
 
 class Q8main:
     def __init__(self, Train_params, DNN_params, Data_params, device):
@@ -28,13 +28,7 @@ class Q8main:
         self.XY = torch.stack((IX, IY), dim=2).unsqueeze(0).to(device)
         
         # 加载深度学习网络
-        self.dnn = MscaleDNN(
-            input_dim=DNN_params["dim"],
-            hidden_units=DNN_params["hidden_units"],
-            output_dim=2,
-            scales=DNN_params["scales"],
-            activation=DNN_params["activation"]
-        )
+        self.dnn = RBFCNN(self.node[:, 1:], device=device)
 
         self.epoch = 0          # 记录当前训练的epoch
         self.freq = Train_params["print_feq"]
