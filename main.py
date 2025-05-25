@@ -69,12 +69,7 @@ Plot_params = {
     "contourN": 15,
 }
 
-DNN_params = {
-    "dim": 2,
-    "hidden_units": [50, 50, 50],
-    "scales": [1,4,8,16],
-    "activation": "tanh",
-}
+DNN_params = {}
 
 Data_params = {
     "RG": 0,    # Placeholder character, 
@@ -121,7 +116,7 @@ if __name__ == '__main__':
             scale_list = [float(element) for element in second_row[:4]]
         
         model.Reload(DG=DimageL[0], scale=scale_list)
-        model.dnn.initialize_weights()
+        # model.dnn.initialize_weights()
         
         u, v = Q8_DIC_Solver(model=model, Train_params=Train_params)
 

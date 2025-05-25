@@ -28,7 +28,13 @@ class Q8main:
         self.XY = torch.stack((IX, IY), dim=2).unsqueeze(0).to(device)
         
         # 加载深度学习网络
-        self.dnn = RBFCNN(self.node[:, 1:], device=device)
+        xymax, _ = torch.max(self.node[:, 1:], dim=0)
+        xymin, _ = torch.min(self.node[:, 1:], dim=0)
+        # print(f"xymin: {xymin.shape}, xymax: {xymax.shape}")
+        self.dnn = RBFCNN(self.node[:, 1:], 
+                          xymin.unsqueeze(0), 
+                          xymax.unsqueeze(0), 
+                          device=device)
 
         self.epoch = 0          # 记录当前训练的epoch
         self.freq = Train_params["print_feq"]

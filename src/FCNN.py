@@ -2,28 +2,28 @@ import torch
 import torch.nn as nn
 
 class RBFCNN(nn.Module):
-    def __init__(self, centers, init_b=10.0, device='cpu'):
+    def __init__(self, centers, xymin, xymax, init_b=50.0, device='cpu'):
         super(RBFCNN, self).__init__()
         self.device = torch.device(device)
         self.input_dim = centers.shape[1]
         self.N = centers.shape[0]
 
-        # BatchNorm without affine parameters
-        self.norm_x = nn.BatchNorm1d(self.input_dim, affine=False).to(self.device)
-        self.norm_c = nn.BatchNorm1d(self.input_dim, affine=False).to(self.device)
+        if not isinstance(centers, torch.Tensor):
+            centers = torch.tensor(centers, dtype=torch.float32).to(device)
+        if not isinstance(xymin, torch.Tensor):
+            xymin = torch.tensor(xymin, dtype=torch.float32)
+        if not isinstance(xymax, torch.Tensor):
+            xymax = torch.tensor(xymax, dtype=torch.float32)
 
-        # register raw centers and normalize
-        raw_centers = centers.clone().detach().to(self.device)
-        self.register_buffer('raw_centers', raw_centers)
-        with torch.no_grad():
-            self.norm_c.train()  # force BatchNorm to compute stats
-            normed_centers = self.norm_c(self.raw_centers)
-        self.centers = nn.Parameter(normed_centers, requires_grad=False)
+        normd_centers = (centers - xymin) / (xymax - xymin) * 2 - 1
+        self.xymin = nn.Parameter(xymin, requires_grad=False)
+        self.xymax = nn.Parameter(xymax, requires_grad=False)
+        self.centers = nn.Parameter(normd_centers, requires_grad=False)
 
         # Trainable parameters (all moved to correct device)
-        self.a_u = nn.Parameter(torch.randn(self.N, 1, device=self.device))
+        self.a_u = nn.Parameter(torch.empty(self.N, 1, device=self.device).uniform_(-1.0, 1.0))
         self.a_v = nn.Parameter(torch.empty(self.N, 1, device=self.device).uniform_(-1.0, 1.0))
-        self.b = nn.Parameter(torch.full((self.N, 1), init_b, device=self.device))
+        self.b = nn.Parameter(torch.full((self.N, 1), init_b), requires_grad=False)
 
 
     def forward(self, xy):
@@ -31,7 +31,7 @@ class RBFCNN(nn.Module):
         :param xy: (B, 2) tensor of input coordinates (x, y)
         :return: (B, 2) tensor of outputs (u, v)
         """
-        xy_norm = self.norm_x(xy)  # (B, 2)
+        xy_norm = (xy - self.xymin) / (self.xymax - self.xymin) * 2 - 1  # (B, 2)
         x = xy_norm.unsqueeze(1)        # (B, 1, 2)
         c = self.centers.unsqueeze(0)   # (1, N, 2)
         r2 = ((x - c) ** 2).sum(dim=2)  # (B, N)
@@ -68,18 +68,18 @@ class RBFCNN(nn.Module):
             torch.save(checkpoint, self.path)
             self.best_model = self.state_dict()
 
-    def freeze_all_parameters(self):
-        for param in self.parameters():
-            param.requires_grad = False
+    # def freeze_all_parameters(self):
+    #     for param in self.parameters():
+    #         param.requires_grad = False
 
-    def unfreeze_all_parameters(self):
-        for param in self.parameters():
-            param.requires_grad = True
+    # def unfreeze_all_parameters(self):
+    #     for param in self.parameters():
+    #         param.requires_grad = True
 
-    def initialize_weights(self, method='xavier'):
-        if method not in ['xavier', 'kaiming']:
-            raise ValueError("Unsupported method. Use 'xavier' or 'kaiming'.")
-        initializer = nn.init.xavier_uniform_ if method == 'xavier' else nn.init.kaiming_uniform_
-        initializer(self.a_u)
-        initializer(self.a_v)
-        nn.init.constant_(self.b, 10.0)
+    # def initialize_weights(self, method='xavier'):
+    #     if method not in ['xavier', 'kaiming']:
+    #         raise ValueError("Unsupported method. Use 'xavier' or 'kaiming'.")
+    #     initializer = nn.init.xavier_uniform_ if method == 'xavier' else nn.init.kaiming_uniform_
+    #     initializer(self.a_u)
+    #     initializer(self.a_v)
+    #     nn.init.constant_(self.b, 10.0)
